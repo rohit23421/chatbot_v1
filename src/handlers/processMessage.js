@@ -12,7 +12,8 @@ import {
     getMediaUrl,
     downloadMedia,
 } from "../services/whatsapp.js";
-import { generateReply } from "../services/ai.js";
+import { generateReply, summarizeDocument } from "../services/ai.js";
+import { extractPdfText, looksLikeScannedPdf } from "../services/pdf.js";
 import {
     getFirstQuestion,
     getFieldForStep,
@@ -197,19 +198,42 @@ async function handleFileMessage(message) {
         mimeType: mediaInfo.mime_type,
     });
 
-    // 7. Acknowledge receipt — keeping this simple for now, no AI analysis
-    // of file contents yet (that's a further extension, not core Part 7).
-    const ackText = caption
-        ? `Got your ${message.type} — thanks!`
-        : `Got your ${message.type} (${fileName}) — saved it.`;
+    // 7. If it's a PDF, try to extract text and generate a real summary.
+    // Everything else (images, audio, video, non-PDF documents) just gets
+    // a simple acknowledgement for now.
+    const isPdf =
+        mediaInfo.mime_type === "application/pdf" || fileName.toLowerCase().endsWith(".pdf");
 
-    await sentTextMessage(waId, ackText);
+    let replyText;
+
+    if (isPdf) {
+        try {
+            const extractedText = await extractPdfText(fileBuffer);
+
+            if (looksLikeScannedPdf(extractedText)) {
+                replyText =
+                    "I saved your PDF, but I couldn't find readable text in it — it looks like a scanned/photographed document, which I can't analyze yet.";
+            } else {
+                const summary = await summarizeDocument(extractedText);
+                replyText = `Here's a summary of your PDF:\n\n${summary}`;
+            }
+        } catch (err) {
+            console.error("❌ Error analyzing PDF:", err);
+            replyText = "I saved your PDF, but ran into an issue analyzing its contents.";
+        }
+    } else {
+        replyText = caption
+            ? `Got your ${message.type} — thanks!`
+            : `Got your ${message.type} (${fileName}) — saved it.`;
+    }
+
+    await sentTextMessage(waId, replyText);
 
     await saveMessage({
         conversationId: conversation.id,
         userId: user.id,
         role: "assistant",
-        content: ackText,
+        content: replyText,
     });
 
     console.log(`✅ Stored ${message.type} from ${waId} at ${storagePath}`);

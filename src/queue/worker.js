@@ -33,6 +33,12 @@ worker.on("completed", (job) => {
 
 worker.on("failed", (job, err) => {
     console.error(`❌ Job ${job?.id} failed:`, err.message);
+    // Axios errors carry the actual API error body here — this is what
+    // tells us WHICH service rejected the request and why, instead of
+    // just "400 Bad Request" with no context.
+    if (err.response?.data) {
+        console.error("   API error details:", JSON.stringify(err.response.data));
+    }
 });
 
 console.log(`👷 Worker started — listening for jobs (concurrency: ${CONCURRENCY})`);
